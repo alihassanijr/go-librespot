@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	librespot "github.com/devgianlu/go-librespot"
 	"github.com/devgianlu/go-librespot/apresolve"
+	"github.com/devgianlu/go-librespot/audio"
 	"github.com/devgianlu/go-librespot/cache"
 	"github.com/devgianlu/go-librespot/mpris"
 	"github.com/devgianlu/go-librespot/player"
@@ -44,6 +46,8 @@ type App struct {
 	logoutCh chan *AppPlayer
 
 	audioCache *cache.Cache
+	// What was learned about Spotify's CDN hosts, shared by every player of this app.
+	cdnHosts *audio.CdnHosts
 
 	// metaCache and contextLists back the opt-in metadata features. They live
 	// here rather than on the player so that a session swap (logout, a new
@@ -90,7 +94,29 @@ func New(opts *Options) (*App, error) {
 		cfg:        opts.Config,
 		stateStore: opts.StateStore,
 		logoutCh:   make(chan *AppPlayer),
-		client:     &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			// The default transport reuses a kept-alive connection for up to 90 s of
+			// idleness and has no deadline for the first response byte. A pooled
+			// connection to the audio CDN that died quietly is then reused, the request
+			// waits the full 30 s, and only the retry (on a fresh connection) succeeds:
+			// seen as ~30 s stalls at track starts and mid-track. So: never reuse a
+			// connection idle for more than a few seconds, and cap the wait for a
+			// response so a dead one costs seconds, not the whole timeout.
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 15 * time.Second,
+				}).DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConnsPerHost:   8,
+				IdleConnTimeout:       5 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 5 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		},
 	}
 
 	var err error
@@ -151,6 +177,8 @@ func New(opts *Options) (*App, error) {
 			return nil, fmt.Errorf("failed initializing audio cache: %w", err)
 		}
 	}
+
+	app.cdnHosts = audio.NewCdnHosts(app.log, app.cfg.CdnHostsFile, app.cfg.CdnQuarantine)
 
 	if app.cfg.Metadata.Enabled {
 		app.metaCache = newTrackMetaCache(trackMetaCacheCapacity(effectiveMetaMaxTracks(app.cfg.Metadata.MaxTracks)))
@@ -324,6 +352,9 @@ func (app *App) newAppPlayer(ctx context.Context, creds any) (_ *AppPlayer, err 
 		Log:      app.log,
 
 		Cache: app.audioCache,
+
+		CdnHosts: app.cdnHosts,
+		CdnRace:  app.cfg.CdnRace,
 
 		FlacEnabled: app.cfg.FlacEnabled,
 

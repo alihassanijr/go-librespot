@@ -54,6 +54,16 @@ type Config struct {
 
 	Cache CacheConfig
 
+	// CdnRace is how many of Spotify's CDN hosts a track's first chunk is requested from
+	// in parallel; the quickest serves the rest of the track. 1 disables the race.
+	CdnRace int
+	// CdnQuarantine is how long a CDN host that failed or stalled is kept last in line
+	// (with no success since). Zero disables the quarantine.
+	CdnQuarantine time.Duration
+	// CdnHostsFile keeps what was learned about the CDN hosts across restarts; empty
+	// keeps it in memory only.
+	CdnHostsFile string
+
 	Metadata MetadataConfig
 
 	Credentials CredentialsConfig

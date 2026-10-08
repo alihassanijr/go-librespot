@@ -66,6 +66,8 @@ type cliConfig struct {
 	MprisEnabled                  bool     `koanf:"mpris_enabled"`
 	FlacEnabled                   bool     `koanf:"flac_enabled"`
 	PreferFirewallFriendlyPorts   bool     `koanf:"prefer_firewall_friendly_ports"`
+	CdnRace                       int      `koanf:"cdn_race"`
+	CdnQuarantineHours            int      `koanf:"cdn_quarantine_hours"`
 
 	Server struct {
 		Enabled     bool   `koanf:"enabled"`
@@ -144,6 +146,11 @@ func (c *cliConfig) toDaemonConfig() *daemon.Config {
 		ImageSize:   c.Server.ImageSize,
 
 		PreferFirewallFriendlyPorts: c.PreferFirewallFriendlyPorts,
+
+		// Validated in loadCLIConfig.
+		CdnRace:       c.CdnRace,
+		CdnQuarantine: time.Duration(c.CdnQuarantineHours) * time.Hour,
+		CdnHostsFile:  filepath.Join(c.ConfigDir, "cdn_hosts.json"),
 	}
 	dc.Cache.Enabled = c.Cache.Enabled
 	dc.Cache.Dir = c.Cache.Dir
@@ -219,6 +226,9 @@ func loadCLIConfig(cfg *cliConfig) error {
 
 		"skip_debounce_ms": 600,
 
+		"cdn_race":             2,
+		"cdn_quarantine_hours": 24,
+
 		"credentials.type": "zeroconf",
 
 		"cache.enabled":    false,
@@ -285,6 +295,13 @@ func loadCLIConfig(cfg *cliConfig) error {
 
 	if _, err := parseSize(cfg.Cache.SizeLimit); err != nil {
 		return fmt.Errorf("invalid cache.size_limit: %w", err)
+	}
+
+	if cfg.CdnRace < 1 || cfg.CdnRace > 4 {
+		return fmt.Errorf("invalid cdn_race: %d (1..4)", cfg.CdnRace)
+	}
+	if cfg.CdnQuarantineHours < 0 {
+		return fmt.Errorf("invalid cdn_quarantine_hours: %d (0 disables)", cfg.CdnQuarantineHours)
 	}
 
 	return nil

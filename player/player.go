@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"sync/atomic"
 	"time"
 
@@ -35,8 +34,6 @@ const (
 
 const MaxStateVolume = 65535
 
-const CdnUrlQuarantineDuration = 15 * time.Minute
-
 var ErrPlayerClosed = errors.New("player is closed")
 
 func ptr[T any](v T) *T {
@@ -59,7 +56,8 @@ type Player struct {
 
 	cache *cache.Cache
 
-	cdnQuarantine map[string]time.Time
+	cdnHosts *audio.CdnHosts
+	cdnRace  int
 
 	newOutput func(source librespot.Float32Reader, volume float32, device string) (output.Output, error)
 
@@ -118,6 +116,13 @@ type Options struct {
 	// Cache, when non-nil, is used to store and retrieve encrypted audio files
 	// on disk, avoiding a CDN download when a track is played again.
 	Cache *cache.Cache
+
+	// CdnHosts, when non-nil, ranks Spotify's CDN hosts by how they behaved (kept in a
+	// file across restarts) and keeps hosts that failed recently last.
+	CdnHosts *audio.CdnHosts
+	// CdnRace is how many CDN hosts a track's first chunk is requested from in parallel;
+	// the quickest serves the rest of the track. 0 or 1 means no race.
+	CdnRace int
 
 	// FlacEnabled specifies if FLAC files should be preferred when available.
 	// When setting this to true, it is assumed that the PlayPlay plugin is provided.
@@ -208,7 +213,8 @@ func NewPlayer(opts *Options) (*Player, error) {
 		audioKey:                  opts.AudioKey,
 		events:                    opts.Events,
 		cache:                     opts.Cache,
-		cdnQuarantine:             make(map[string]time.Time),
+		cdnHosts:                  opts.CdnHosts,
+		cdnRace:                   opts.CdnRace,
 		flacEnabled:               opts.FlacEnabled,
 		normalisationEnabled:      opts.NormalisationEnabled,
 		normalisationUseAlbumGain: opts.NormalisationUseAlbumGain,
@@ -626,37 +632,14 @@ func (p *Player) httpChunkedReaderFromStorageResolve(log librespot.Logger, clien
 
 		log.Tracef("found %d cdn urls", len(storageResolve.Cdnurl))
 
-		var err error
-		for i := 0; i < len(storageResolve.Cdnurl); i++ {
-			var cdnUrl *url.URL
-			cdnUrl, err = url.Parse(storageResolve.Cdnurl[i])
-			if err != nil {
-				log.WithError(err).WithField("url", storageResolve.Cdnurl[i]).Warnf("failed parsing cdn url, trying next url")
-				continue
-			}
-
-			if lastFailed, found := p.cdnQuarantine[cdnUrl.Host]; found {
-				if i == len(storageResolve.Cdnurl)-1 {
-					log.WithField("host", cdnUrl.Host).Warnf("cannot skip cdn url because it is the last one")
-				} else if time.Since(lastFailed) < CdnUrlQuarantineDuration {
-					log.WithField("host", cdnUrl.Host).Infof("skipping cdn url because it has failed recently")
-					continue
-				}
-			}
-
-			var rawStream *audio.HttpChunkedReader
-			rawStream, err = audio.NewHttpChunkedReader(log, client, cdnUrl.String())
-			if err != nil {
-				log.WithError(err).WithField("host", cdnUrl.Host).Warnf("failed creating chunked reader, trying next url")
-				p.cdnQuarantine[cdnUrl.Host] = time.Now()
-				continue
-			}
-
-			delete(p.cdnQuarantine, cdnUrl.Host)
-			return rawStream, nil
+		// The reader gets every URL: it orders them by what the host table remembers,
+		// races the first chunk over the best few, and moves to the next host whenever a
+		// chunk attempt fails or stalls, for any chunk of the file.
+		rawStream, err := audio.NewHttpChunkedReaderWithFallbacks(log, client, storageResolve.Cdnurl, p.cdnHosts, p.cdnRace)
+		if err != nil {
+			return nil, fmt.Errorf("failed creating chunked reader for any cdn url: %w", err)
 		}
-
-		return nil, fmt.Errorf("failed creating chunked reader for any cdn url: %w", err)
+		return rawStream, nil
 	} else {
 		return nil, fmt.Errorf("unknown storage resolve result: %s", storageResolve.Result)
 	}

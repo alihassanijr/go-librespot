@@ -299,6 +299,8 @@ audio_output_pipe: '' # Path to a named pipe for audio output
 audio_output_pipe_format: s16le # Audio output pipe format (s16le, s32le, f32le)
 audio_output_pipe_wait_for_reader: false # Whether to wait for a reader to connect to the FIFO before starting playback (see below)
 bitrate: 160 # Playback bitrate (96, 160, 320)
+cdn_race: 2 # CDN hosts a track's first chunk is requested from in parallel, the quickest serves the track (1..4, 1 disables)
+cdn_quarantine_hours: 24 # How long a CDN host that failed or stalled is kept last in line; what was learned is kept in cdn_hosts.json (0 disables)
 crossfade_duration: 0 # Crossfade duration between tracks in milliseconds (0 to disable)
 skip_debounce_ms: 600 # Coalesce rapid next/prev presses; the selected track loads once presses stop (0 to disable)
 volume_steps: 100 # Volume steps count

@@ -1102,7 +1102,20 @@ func (p *AppPlayer) setOptions(repeatingContext *bool, repeatingTrack *bool, shu
 		requiresUpdate = true
 	}
 
-	if p.state.tracks != nil && shufflingContext != nil && *shufflingContext != p.state.player.Options.ShufflingContext {
+	if p.state.tracks == nil && shufflingContext != nil && *shufflingContext != p.state.player.Options.ShufflingContext {
+		// Nothing loaded yet (fresh start): there is no list to reorder, but the setting
+		// must stick so that the next play starts the context shuffled, as the API
+		// documents ("enable shuffle first, then play"). Dropping it here made
+		// shuffle-then-play after a start begin unshuffled at the first track.
+		p.state.player.Options.ShufflingContext = *shufflingContext
+		p.app.server.Emit(&ApiEvent{
+			Type: ApiEventTypeShuffleContext,
+			Data: ApiEventDataShuffleContext{
+				Value: *shufflingContext,
+			},
+		})
+		requiresUpdate = true
+	} else if p.state.tracks != nil && shufflingContext != nil && *shufflingContext != p.state.player.Options.ShufflingContext {
 		shuffle := *shufflingContext
 
 		// Reported straight away: this is what the shuffle button binds to, and

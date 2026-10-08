@@ -144,6 +144,9 @@ func (c *Spclient) innerRequestWith(ctx context.Context, client *http.Client, me
 			if !retryTransient {
 				return nil, backoff.Permanent(err)
 			}
+			// Logged with the error, so a stalled attempt (DNS, connect, TLS, no response)
+			// is visible rather than hidden by the retry.
+			c.log.Warnf("spclient %s %s attempt failed, retrying: %v", method, reqUrl.Path, err)
 			return nil, err
 		}
 
