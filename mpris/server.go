@@ -113,21 +113,13 @@ func mediaLengthMs(media *librespot.Media) int64 {
 	}
 }
 
+// setProperty publishes our own state. SetMust, not Set: Set is the D-Bus method clients call,
+// which refuses read-only properties (most of MPRIS's) and runs the callbacks meant for a
+// client's write (Volume, Shuffle, LoopStatus would echo our own update back as a command).
 func (d *DBusInstance) setProperty(interfaceName string, fieldName string, value interface{}) *dbus.Error {
-
-	err := d.props.Set(
-		interfaceName,
-		fieldName,
-		dbus.MakeVariant(value),
-	)
-
-	if err != nil {
-		d.log.Warnf("error setting mpris property: %s", *err)
-	} else {
-		d.log.Tracef("set mpris property \"%s\" on interface \"%s\" to \"%s\"", fieldName, interfaceName, value)
-	}
-	// can be a ptr to some error or nil
-	return err
+	d.props.SetMust(interfaceName, fieldName, value)
+	d.log.Tracef("set mpris property \"%s\" on interface \"%s\" to \"%v\"", fieldName, interfaceName, value)
+	return nil
 }
 
 // ConcreteServer publishes the player on the D-Bus session bus. The bus is
@@ -257,6 +249,9 @@ func (s *ConcreteServer) Receive() <-chan MediaPlayer2PlayerCommand {
 // executeStateUpdate publishes what changed in state since last, or all of it
 // when last is nil, as on a fresh connection.
 func (d *DBusInstance) executeStateUpdate(state MediaState, last *MediaState) *dbus.Error {
+	// First: every property change below is signalled, and clients (ams) re-read everything,
+	// Position included, on each signal. They must find the new reference point already.
+	d.position.set(state.PositionMs, state.PlaybackStatus == Playing, mediaLengthMs(state.Media))
 	if last == nil || state.PlaybackStatus != last.PlaybackStatus {
 		if err := d.setProperty("org.mpris.MediaPlayer2.Player", "PlaybackStatus", state.PlaybackStatus); err != nil {
 			return err
@@ -277,8 +272,6 @@ func (d *DBusInstance) executeStateUpdate(state MediaState, last *MediaState) *d
 			return err
 		}
 	}
-	// Every update moves the reference point the live Position is computed from.
-	d.position.set(state.PositionMs, state.PlaybackStatus == Playing, mediaLengthMs(state.Media))
 	if last == nil || state.PositionMs != last.PositionMs {
 		// Microseconds, as MPRIS has it (it was milliseconds).
 		if err := d.setProperty("org.mpris.MediaPlayer2.Player", "Position", state.PositionMs*1000); err != nil {

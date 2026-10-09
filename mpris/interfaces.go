@@ -10,10 +10,14 @@ import (
 	"github.com/godbus/dbus/v5/prop"
 )
 
+// newProp makes a property; clients may write it only when there is a callback acting on the
+// write (Volume, Shuffle, LoopStatus). The rest are read-only, as the MPRIS spec has them: a
+// writable PlaybackStatus or Metadata let any program on the bus overwrite what we published
+// (seen: PlaybackStatus "Stopped" while playing, a track without metadata).
 func newProp(value interface{}, cb func(*prop.Change) *dbus.Error) *prop.Prop {
 	return &prop.Prop{
 		Value:    value,
-		Writable: true,
+		Writable: cb != nil,
 		Emit:     prop.EmitTrue,
 		Callback: cb,
 	}

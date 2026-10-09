@@ -1043,6 +1043,15 @@ func (p *AppPlayer) commitLoad(stream *player.Stream, uri string, paused bool, t
 		Type: ApiEventTypeMetadata,
 		Data: ApiEventDataMetadata(*p.newApiResponseStatusTrack(stream, trackPosition)),
 	})
+
+	// The player reports play / pause as soon as the stream is set, which can be handled
+	// before this commit: MPRIS then went out without the track (no metadata until the next
+	// play / pause). Publish it here too, with the media and position now known.
+	if paused {
+		p.emitMprisUpdate(mpris.Paused)
+	} else {
+		p.emitMprisUpdate(mpris.Playing)
+	}
 }
 
 // setModes merges modes into the player options. A Jam is switched on and off
