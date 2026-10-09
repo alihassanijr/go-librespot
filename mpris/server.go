@@ -21,10 +21,96 @@ import (
 var busRetryInterval = 10 * time.Second
 
 type DBusInstance struct {
-	props *prop.Properties
-	conn  *dbus.Conn
+	props    *prop.Properties
+	conn     *dbus.Conn
+	position *livePosition
 
 	log librespot.Logger
+}
+
+const playerInterfaceName = "org.mpris.MediaPlayer2.Player"
+
+// livePosition is where playback was at a moment, and whether it moves on from there. MPRIS
+// clients read Position whenever they want the current one (the spec has it not signalled), so
+// a value stored at the last state change would stand still while the track plays.
+type livePosition struct {
+	mu       sync.Mutex
+	baseMs   int64
+	at       time.Time
+	playing  bool
+	lengthMs int64
+}
+
+func (l *livePosition) set(positionMs int64, playing bool, lengthMs int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.baseMs = positionMs
+	l.at = time.Now()
+	l.playing = playing
+	l.lengthMs = lengthMs
+}
+
+func (l *livePosition) seek(positionMs int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.baseMs = positionMs
+	l.at = time.Now()
+}
+
+// nowUs is the current position in microseconds, the unit MPRIS uses.
+func (l *livePosition) nowUs() int64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	positionMs := l.baseMs
+	if l.playing {
+		positionMs += time.Since(l.at).Milliseconds()
+	}
+	if l.lengthMs > 0 && positionMs > l.lengthMs {
+		positionMs = l.lengthMs
+	}
+	if positionMs < 0 {
+		positionMs = 0
+	}
+	return positionMs * 1000
+}
+
+// liveProperties serves org.freedesktop.DBus.Properties like props, except that the player's
+// Position is computed at each read.
+type liveProperties struct {
+	props    *prop.Properties
+	position *livePosition
+}
+
+func (p liveProperties) Get(iface, property string) (dbus.Variant, *dbus.Error) {
+	if iface == playerInterfaceName && property == "Position" {
+		return dbus.MakeVariant(p.position.nowUs()), nil
+	}
+	return p.props.Get(iface, property)
+}
+
+func (p liveProperties) GetAll(iface string) (map[string]dbus.Variant, *dbus.Error) {
+	all, err := p.props.GetAll(iface)
+	if err == nil && iface == playerInterfaceName {
+		all["Position"] = dbus.MakeVariant(p.position.nowUs())
+	}
+	return all, err
+}
+
+func (p liveProperties) Set(iface, property string, value dbus.Variant) *dbus.Error {
+	return p.props.Set(iface, property, value)
+}
+
+func mediaLengthMs(media *librespot.Media) int64 {
+	switch {
+	case media == nil:
+		return 0
+	case media.IsTrack():
+		return int64(media.Track().GetDuration())
+	case media.IsEpisode():
+		return int64(media.Episode().GetDuration())
+	default:
+		return 0
+	}
 }
 
 func (d *DBusInstance) setProperty(interfaceName string, fieldName string, value interface{}) *dbus.Error {
@@ -191,8 +277,11 @@ func (d *DBusInstance) executeStateUpdate(state MediaState, last *MediaState) *d
 			return err
 		}
 	}
+	// Every update moves the reference point the live Position is computed from.
+	d.position.set(state.PositionMs, state.PlaybackStatus == Playing, mediaLengthMs(state.Media))
 	if last == nil || state.PositionMs != last.PositionMs {
-		if err := d.setProperty("org.mpris.MediaPlayer2.Player", "Position", state.PositionMs); err != nil {
+		// Microseconds, as MPRIS has it (it was milliseconds).
+		if err := d.setProperty("org.mpris.MediaPlayer2.Player", "Position", state.PositionMs*1000); err != nil {
 			return err
 		}
 	}
@@ -206,6 +295,7 @@ func (d *DBusInstance) executeStateUpdate(state MediaState, last *MediaState) *d
 }
 
 func (d *DBusInstance) executeSeekSignal(state SeekState) error {
+	d.position.seek(state.PositionMs)
 	return d.conn.Emit(
 		"/org/mpris/MediaPlayer2",
 		"org.mpris.MediaPlayer2.Player.Seeked",
@@ -234,7 +324,7 @@ func (s *ConcreteServer) connect() (_ *DBusInstance, err error) {
 		return nil, fmt.Errorf("failed greeting the session bus: %w", err)
 	}
 
-	d := &DBusInstance{conn: conn, log: s.log}
+	d := &DBusInstance{conn: conn, log: s.log, position: &livePosition{}}
 	d.props, err = prop.Export(
 		conn,
 		"/org/mpris/MediaPlayer2",
@@ -245,6 +335,11 @@ func (s *ConcreteServer) connect() (_ *DBusInstance, err error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed exporting mpris properties: %w", err)
+	}
+	// Replaces the Properties handler prop.Export registered, so Position reads are live.
+	live := liveProperties{props: d.props, position: d.position}
+	if err := conn.Export(live, "/org/mpris/MediaPlayer2", "org.freedesktop.DBus.Properties"); err != nil {
+		return nil, fmt.Errorf("failed exporting live mpris properties: %w", err)
 	}
 
 	reply, err := conn.RequestName("org.mpris.MediaPlayer2.go-librespot", dbus.NameFlagReplaceExisting)

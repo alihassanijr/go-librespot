@@ -173,7 +173,8 @@ func (p *AppPlayer) emitMprisUpdate(playbackStatus mpris.PlaybackStatus) {
 				p.state.player.Options.RepeatingContext, p.state.player.Options.RepeatingTrack),
 			Shuffle:    p.state.player.Options.ShufflingContext,
 			Volume:     float64(p.state.device.Volume) / float64(player.MaxStateVolume),
-			PositionMs: p.state.player.Position,
+			// Where playback is now (as /status reports it), the reference MPRIS counts on from.
+			PositionMs: p.state.trackPosition(),
 			Uri:        trackUri,
 			Media:      media,
 		},
