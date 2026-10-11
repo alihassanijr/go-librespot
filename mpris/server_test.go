@@ -85,3 +85,34 @@ func TestServerWaitsForTheSessionBus(t *testing.T) {
 	require.Eventually(t, func() bool { return playbackStatus(t, addr) == string(Paused) },
 		5*time.Second, 50*time.Millisecond, "server did not come back after losing the bus")
 }
+
+// The first update after connecting must be published. It was not: the state published on
+// connecting was remembered by pointing at the variable the next update is received into, so
+// that update compared equal to itself (a cold start stayed "Stopped", without its track).
+func TestFirstUpdateAfterConnectingIsPublished(t *testing.T) {
+	if _, err := exec.LookPath("dbus-daemon"); err != nil {
+		t.Skip("dbus-daemon not installed")
+	}
+
+	addr := "unix:path=" + filepath.Join(t.TempDir(), "bus")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", addr)
+	startBus(t, addr)
+	require.Eventually(t, func() bool {
+		conn, err := dbus.Connect(addr)
+		if err == nil {
+			_ = conn.Close()
+		}
+		return err == nil
+	}, 5*time.Second, 50*time.Millisecond, "bus did not start")
+
+	s, err := NewServer(&librespot.NullLogger{})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s.Close()) }()
+
+	require.Eventually(t, func() bool { return playbackStatus(t, addr) == string(Stopped) },
+		5*time.Second, 50*time.Millisecond, "server did not show up")
+
+	s.EmitStateUpdate(MediaState{PlaybackStatus: Paused, LoopStatus: None})
+	require.Eventually(t, func() bool { return playbackStatus(t, addr) == string(Paused) },
+		5*time.Second, 50*time.Millisecond, "first update after connecting not published")
+}

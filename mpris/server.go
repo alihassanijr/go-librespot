@@ -359,7 +359,11 @@ func (s *ConcreteServer) connect() (_ *DBusInstance, err error) {
 func (s *ConcreteServer) serve(d *DBusInstance, want MediaState) MediaState {
 	var last *MediaState
 	if err := d.executeStateUpdate(want, nil); err == nil {
-		last = &want
+		// A copy: last pointing at want itself would change with the next receive into want,
+		// and that update would compare equal to itself and publish nothing (seen: a cold start
+		// stayed "Stopped" with no track, and play then changed PlaybackStatus alone).
+		uploaded := want
+		last = &uploaded
 	}
 
 	for {
