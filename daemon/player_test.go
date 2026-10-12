@@ -552,6 +552,39 @@ func TestSetOptionsAppliesModes(t *testing.T) {
 	require.Equal(t, "off", lastPushedState(t, p).GetOptions().GetModes()["jam"])
 }
 
+// Smart shuffle is the context_enhancement mode, set from an app's set_options or through the
+// API; either way it is reported to Spotify and announced once per change.
+func TestSmartShuffleMode(t *testing.T) {
+	p := newTestAppPlayer(t)
+
+	smartEvents := func() int {
+		count := 0
+		for _, ev := range apiEvents(p) {
+			if ev == ApiEventTypeSmartShuffle {
+				count++
+			}
+		}
+		return count
+	}
+
+	p.setSmartShuffle(true)
+	require.True(t, smartShuffleOn(p.state.player.Options.Modes))
+	require.Equal(t, smartShuffleModeOn, lastPushedState(t, p).GetOptions().GetModes()[contextEnhancementMode])
+	require.Equal(t, 1, smartEvents())
+
+	// The same again changes nothing and announces nothing.
+	p.setSmartShuffle(true)
+	require.Equal(t, 1, smartEvents())
+
+	// Switched off from an app. (Pushed later: state puts are spaced out.)
+	var req dealer.RequestPayload
+	req.Command.Endpoint = "set_options"
+	req.Command.Modes = map[string]string{contextEnhancementMode: smartShuffleModeOff}
+	require.NoError(t, p.handlePlayerCommand(req))
+	require.False(t, smartShuffleOn(p.state.player.Options.Modes))
+	require.Equal(t, 2, smartEvents())
+}
+
 // A device that has never been in a Jam has no modes at all to merge into.
 func TestSetOptionsAppliesModesWithoutAny(t *testing.T) {
 	p := newTestAppPlayer(t)

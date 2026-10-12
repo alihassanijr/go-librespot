@@ -129,6 +129,7 @@ const (
 	ApiRequestTypeSetRepeatingContext ApiRequestType = "repeating_context"
 	ApiRequestTypeSetRepeatingTrack   ApiRequestType = "repeating_track"
 	ApiRequestTypeSetShufflingContext ApiRequestType = "shuffling_context"
+	ApiRequestTypeSetSmartShuffle     ApiRequestType = "smart_shuffle"
 	ApiRequestTypeAddToQueue          ApiRequestType = "add_to_queue"
 	ApiRequestTypeToken               ApiRequestType = "token"
 	ApiRequestSetDeviceName           ApiRequestType = "set_device_name"
@@ -169,6 +170,7 @@ const (
 	ApiEventTypeRepeatTrack    ApiEventType = "repeat_track"
 	ApiEventTypeRepeatContext  ApiEventType = "repeat_context"
 	ApiEventTypeShuffleContext ApiEventType = "shuffle_context"
+	ApiEventTypeSmartShuffle   ApiEventType = "smart_shuffle"
 	ApiEventTypePlaybackReady  ApiEventType = "playback_ready"
 	ApiEventTypePlaybackError  ApiEventType = "playback_error"
 )
@@ -407,6 +409,10 @@ type ApiEventDataRepeatContext struct {
 }
 
 type ApiEventDataShuffleContext struct {
+	Value bool `json:"value"`
+}
+
+type ApiEventDataSmartShuffle struct {
 	Value bool `json:"value"`
 }
 
@@ -739,6 +745,16 @@ func (s *ConcreteApiServer) PlayerShuffleContext(w http.ResponseWriter, r *http.
 	}
 
 	s.handleRequest(ApiRequest{Type: ApiRequestTypeSetShufflingContext, Data: data.ShuffleContext}, w)
+}
+
+func (s *ConcreteApiServer) PlayerSmartShuffle(w http.ResponseWriter, r *http.Request) {
+	var data ApiSmartShuffle
+	if err := jsonDecode(r, &data); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	s.handleRequest(ApiRequest{Type: ApiRequestTypeSetSmartShuffle, Data: data.SmartShuffle}, w)
 }
 
 func (s *ConcreteApiServer) PlayerAddToQueue(w http.ResponseWriter, r *http.Request) {

@@ -275,6 +275,8 @@ func TestApiStatusWireFormat(t *testing.T) {
 			RepeatContext:      false,
 			RepeatTrack:        false,
 			ShuffleContext:     false,
+			SmartShuffle:       true,
+			Modes:              map[string]string{"context_enhancement": "RECOMMENDATION"},
 			Track: &ApiTrack{
 				Uri:           "spotify:track:xxx",
 				Name:          "Some Song",
@@ -316,6 +318,8 @@ func TestApiStatusWireFormat(t *testing.T) {
 		"repeat_context": false,
 		"repeat_track": false,
 		"shuffle_context": false,
+		"smart_shuffle": true,
+		"modes": {"context_enhancement": "RECOMMENDATION"},
 		"track": {
 			"uri": "spotify:track:xxx",
 			"name": "Some Song",
@@ -520,7 +524,7 @@ func TestApiVolume(t *testing.T) {
 	})
 }
 
-// These three unwrap their single boolean field before handing it on.
+// These four unwrap their single boolean field before handing it on.
 func TestApiToggles(t *testing.T) {
 	for _, tt := range []struct {
 		path  string
@@ -530,6 +534,7 @@ func TestApiToggles(t *testing.T) {
 		{"/player/repeat_context", "repeat_context", ApiRequestTypeSetRepeatingContext},
 		{"/player/repeat_track", "repeat_track", ApiRequestTypeSetRepeatingTrack},
 		{"/player/shuffle_context", "shuffle_context", ApiRequestTypeSetShufflingContext},
+		{"/player/smart_shuffle", "smart_shuffle", ApiRequestTypeSetSmartShuffle},
 	} {
 		t.Run(tt.path, func(t *testing.T) {
 			ts := newTestServer(t, okReply)

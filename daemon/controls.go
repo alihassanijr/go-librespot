@@ -1064,12 +1064,17 @@ func (p *AppPlayer) setModes(modes map[string]string) {
 		return
 	}
 
+	// The values clients send are not documented anywhere; this line is how they are learnt.
+	p.app.log.Infof("set modes %v", modes)
+
 	if p.state.player.Options == nil {
 		p.state.player.Options = &connectpb.ContextPlayerOptions{}
 	}
 	if p.state.player.Options.Modes == nil {
 		p.state.player.Options.Modes = make(map[string]string, len(modes))
 	}
+
+	smartBefore := smartShuffleOn(p.state.player.Options.Modes)
 
 	var changed bool
 	for mode, value := range modes {
@@ -1079,9 +1084,41 @@ func (p *AppPlayer) setModes(modes map[string]string) {
 		}
 	}
 
-	if changed {
-		p.updateState()
+	if !changed {
+		return
 	}
+	p.updateState()
+
+	if smartAfter := smartShuffleOn(p.state.player.Options.Modes); smartAfter != smartBefore {
+		p.app.server.Emit(&ApiEvent{
+			Type: ApiEventTypeSmartShuffle,
+			Data: ApiEventDataSmartShuffle{
+				Value: smartAfter,
+			},
+		})
+	}
+}
+
+// Smart shuffle is the context_enhancement mode: RECOMMENDATION when on, NONE when off (what
+// the Spotify apps send). Only the mode is kept and reported; nothing here adds recommended
+// tracks to the queue.
+const (
+	contextEnhancementMode = "context_enhancement"
+	smartShuffleModeOn     = "RECOMMENDATION"
+	smartShuffleModeOff    = "NONE"
+)
+
+func smartShuffleOn(modes map[string]string) bool {
+	return modes[contextEnhancementMode] == smartShuffleModeOn
+}
+
+// setSmartShuffle switches smart shuffle the way a Spotify app does: by its mode.
+func (p *AppPlayer) setSmartShuffle(on bool) {
+	value := smartShuffleModeOff
+	if on {
+		value = smartShuffleModeOn
+	}
+	p.setModes(map[string]string{contextEnhancementMode: value})
 }
 
 func (p *AppPlayer) setOptions(repeatingContext *bool, repeatingTrack *bool, shufflingContext *bool) {

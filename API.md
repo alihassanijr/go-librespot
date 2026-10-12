@@ -67,6 +67,9 @@ The websocket endpoint is available at `/events`. The following events are emitt
     - `max`: The max volume value
 - `shuffle_context`: The player shuffling context setting changed
     - `value`: Whether shuffling context is enabled
+- `smart_shuffle`: Smart shuffle (the `context_enhancement` mode) was switched on or off, from a
+  Spotify app or `/player/smart_shuffle`
+    - `value`: Whether smart shuffle is enabled
 - `repeat_context`: The player repeating context setting changed
     - `value`: Whether repeating context is enabled
 - `repeat_track`: The player repeating track setting changed
