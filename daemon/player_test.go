@@ -11,6 +11,7 @@ import (
 	"time"
 
 	librespot "github.com/devgianlu/go-librespot"
+	"github.com/devgianlu/go-librespot/audio"
 	"github.com/devgianlu/go-librespot/dealer"
 	"github.com/devgianlu/go-librespot/mpris"
 	"github.com/devgianlu/go-librespot/player"
@@ -583,6 +584,38 @@ func TestSmartShuffleMode(t *testing.T) {
 	require.NoError(t, p.handlePlayerCommand(req))
 	require.False(t, smartShuffleOn(p.state.player.Options.Modes))
 	require.Equal(t, 2, smartEvents())
+}
+
+// A run of unplayable tracks stops at unplayable_skip_limit instead of walking the whole
+// context and on into autoplay; the stop is reported as a failure that is not itself "one
+// unplayable track".
+func TestUnplayableRunStopsAtTheLimit(t *testing.T) {
+	p := newTestAppPlayer(t)
+	p.app.cfg = &Config{UnplayableSkipLimit: 3}
+	p.state.player.IsPlaying = true
+	p.state.player.IsBuffering = true
+
+	refused := &audio.KeyProviderError{Code: 2}
+	require.False(t, p.noteUnplayable("spotify:track:a", refused))
+	require.False(t, p.noteUnplayable("spotify:track:b", refused))
+	require.True(t, p.state.player.IsPlaying, "still walking after two")
+
+	require.True(t, p.noteUnplayable("spotify:track:c", refused))
+	require.False(t, p.state.player.IsPlaying)
+	require.False(t, p.state.player.IsBuffering)
+	require.Zero(t, p.consecutiveUnplayableSkips, "the next run counts from zero")
+
+	var stop *ApiEventDataPlaybackError
+	for _, ev := range p.app.server.(*recordingApiServer).emitted {
+		if data, ok := ev.Data.(ApiEventDataPlaybackError); ok {
+			stop = &data
+		}
+	}
+	require.NotNil(t, stop)
+	require.Equal(t, playbackErrorStagePlayback, stop.Stage)
+	require.Equal(t, "spotify:track:c", stop.Uri)
+	require.False(t, stop.Unplayable)
+	require.Contains(t, stop.Message, "3 unplayable tracks in a row")
 }
 
 // A device that has never been in a Jam has no modes at all to merge into.

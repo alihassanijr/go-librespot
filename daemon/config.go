@@ -37,6 +37,11 @@ type Config struct {
 	// skip immediately.
 	SkipDebounce time.Duration
 
+	// UnplayableSkipLimit is how many unplayable tracks in a row (refused audio key,
+	// restricted, no supported format) are skipped past before playback stops. A context
+	// full of them otherwise ran through to its end and on into autoplay, a track a second.
+	UnplayableSkipLimit int
+
 	ZeroconfEnabled               bool
 	ZeroconfPort                  int
 	ZeroconfBackend               string
