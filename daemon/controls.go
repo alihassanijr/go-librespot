@@ -756,11 +756,20 @@ func (p *AppPlayer) loadCurrentTrackOrSkip(paused, drop, resume bool, then func(
 
 	p.loadCurrentTrack(paused, drop, resume, 0, func(err error) {
 		if err == nil || !isUnplayableMedia(err) {
+			if err == nil {
+				p.consecutiveUnplayableSkips = 0
+			}
 			then(err)
 			return
 		}
 
-		p.app.log.WithError(err).Warnf("current track unplayable, skipping forward: %s", uri)
+		// The track a load starts on counts towards the run like any other.
+		if p.noteUnplayable(uri, err) {
+			then(fmt.Errorf("failed loading current track: %w", err))
+			return
+		}
+
+		p.app.log.Warnf("current track unplayable, skipping forward: %s", uri)
 		p.advanceNext(true, drop, 0, func(_ bool, err error) {
 			if err != nil {
 				then(fmt.Errorf("failed advancing past unplayable track: %w", err))
@@ -1064,12 +1073,17 @@ func (p *AppPlayer) setModes(modes map[string]string) {
 		return
 	}
 
+	// The values clients send are not documented anywhere; this line is how they are learnt.
+	p.app.log.Infof("set modes %v", modes)
+
 	if p.state.player.Options == nil {
 		p.state.player.Options = &connectpb.ContextPlayerOptions{}
 	}
 	if p.state.player.Options.Modes == nil {
 		p.state.player.Options.Modes = make(map[string]string, len(modes))
 	}
+
+	smartBefore := smartShuffleOn(p.state.player.Options.Modes)
 
 	var changed bool
 	for mode, value := range modes {
@@ -1079,9 +1093,41 @@ func (p *AppPlayer) setModes(modes map[string]string) {
 		}
 	}
 
-	if changed {
-		p.updateState()
+	if !changed {
+		return
 	}
+	p.updateState()
+
+	if smartAfter := smartShuffleOn(p.state.player.Options.Modes); smartAfter != smartBefore {
+		p.app.server.Emit(&ApiEvent{
+			Type: ApiEventTypeSmartShuffle,
+			Data: ApiEventDataSmartShuffle{
+				Value: smartAfter,
+			},
+		})
+	}
+}
+
+// Smart shuffle is the context_enhancement mode: RECOMMENDATION when on, NONE when off (what
+// the Spotify apps send). Only the mode is kept and reported; nothing here adds recommended
+// tracks to the queue.
+const (
+	contextEnhancementMode = "context_enhancement"
+	smartShuffleModeOn     = "RECOMMENDATION"
+	smartShuffleModeOff    = "NONE"
+)
+
+func smartShuffleOn(modes map[string]string) bool {
+	return modes[contextEnhancementMode] == smartShuffleModeOn
+}
+
+// setSmartShuffle switches smart shuffle the way a Spotify app does: by its mode.
+func (p *AppPlayer) setSmartShuffle(on bool) {
+	value := smartShuffleModeOff
+	if on {
+		value = smartShuffleModeOn
+	}
+	p.setModes(map[string]string{contextEnhancementMode: value})
 }
 
 func (p *AppPlayer) setOptions(repeatingContext *bool, repeatingTrack *bool, shufflingContext *bool) {
@@ -1463,13 +1509,47 @@ func (p *AppPlayer) skipNext(track *connectpb.ContextTrack) error {
 	return nil
 }
 
-// maxConsecutiveUnplayableSkips caps how many refused/restricted tracks advanceNext will skip
-// past in a row before stopping, so a fully-gated context can't loop forever.
-const maxConsecutiveUnplayableSkips = 50
+// noteUnplayable counts one more unplayable track in a row. At the configured limit
+// (unplayable_skip_limit) it stops playback and reports true: a context full of refused tracks
+// otherwise ran through to its end and on into autoplay, a track a second.
+func (p *AppPlayer) noteUnplayable(uri string, err error) bool {
+	var keyErr *audio.KeyProviderError
+	if errors.As(err, &keyErr) {
+		p.app.log.WithError(err).Warnf("skipping track: Spotify refused the audio key (code %d) for this playback context: %s", keyErr.Code, uri)
+	} else {
+		p.app.log.WithError(err).Infof("skipping unplayable media: %s", uri)
+	}
+
+	p.consecutiveUnplayableSkips++
+	if p.consecutiveUnplayableSkips < p.app.cfg.UnplayableSkipLimit {
+		return false
+	}
+
+	count := p.consecutiveUnplayableSkips
+	p.consecutiveUnplayableSkips = 0
+	p.app.log.WithError(err).Warnf("stopping: %d unplayable tracks in a row (last: %s)", count, uri)
+
+	p.state.player.IsPlaying = false
+	p.state.player.IsPaused = false
+	p.state.player.IsBuffering = false
+	p.state.player.Timestamp = time.Now().UnixMilli()
+	p.state.player.PositionAsOfTimestamp = 0
+	p.updateState()
+
+	// Not wrapped (%v): the run as a whole is what failed, so the error is not reported as
+	// one unplayable track that was skipped.
+	p.emitPlaybackError(playbackErrorStagePlayback, uri,
+		fmt.Errorf("stopped after %d unplayable tracks in a row: %v", count, err))
+
+	// Whatever was still playing from before the run goes too; the player announces the stop
+	// (stopped event, MPRIS).
+	p.player.Stop()
+	return true
+}
 
 // advanceNext moves to the next track and starts it, reporting through then
-// whether there was one. A run of unplayable tracks is walked forward, bounded
-// by maxConsecutiveUnplayableSkips so a fully gated context cannot loop forever.
+// whether there was one. A run of unplayable tracks is walked forward, up to
+// unplayable_skip_limit of them (see noteUnplayable).
 // delay holds back the load it ends in, see loadCurrentTrack.
 func (p *AppPlayer) advanceNext(forceNext, drop bool, delay time.Duration, then func(hasNextTrack bool, err error)) {
 	if p.state.tracks == nil {
@@ -1560,20 +1640,10 @@ func (p *AppPlayer) advanceTo(hasNextTrack bool, seed []string, drop bool, delay
 			return
 		}
 
-		var keyErr *audio.KeyProviderError
-		if errors.As(err, &keyErr) {
-			p.app.log.WithError(err).Warnf("skipping track: Spotify refused the audio key (code %d) for this playback context: %s", keyErr.Code, uri)
-		} else {
-			p.app.log.WithError(err).Infof("skipping unplayable media: %s", uri)
-		}
-
 		// Walk forward through a run of unplayable tracks (a context whose first — or several —
-		// tracks are refused), bounded so a fully gated or RepeatingContext context advances to
-		// the first playable track instead of freezing, and can never recurse forever.
-		p.consecutiveUnplayableSkips++
-		if p.consecutiveUnplayableSkips > maxConsecutiveUnplayableSkips {
-			p.app.log.WithError(err).Warnf("stopping after %d consecutive unplayable tracks", p.consecutiveUnplayableSkips)
-			p.consecutiveUnplayableSkips = 0
+		// tracks are refused), up to the limit, so a gated track does not freeze the player
+		// and a gated context does not run through to its end.
+		if p.noteUnplayable(uri, err) {
 			then(false, err)
 			return
 		}

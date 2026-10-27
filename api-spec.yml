@@ -137,6 +137,8 @@ components:
         - repeat_context
         - repeat_track
         - shuffle_context
+        - smart_shuffle
+        - modes
         - track
       properties:
         username:
@@ -204,6 +206,19 @@ components:
         shuffle_context:
           description: Whether the shuffle context feature is enabled
           type: boolean
+        smart_shuffle:
+          description: >-
+            Whether smart shuffle is on: the context_enhancement mode is
+            RECOMMENDATION. Only the mode is kept and reported; no recommended
+            tracks are added to the queue.
+          type: boolean
+        modes:
+          description: >-
+            The player option modes as Spotify clients set them, for example
+            jam and context_enhancement; empty when none was ever set
+          type: object
+          additionalProperties:
+            type: string
         track:
           allOf:
             - $ref: '#/components/schemas/track'
@@ -525,6 +540,15 @@ components:
       properties:
         shuffle_context:
           description: Whether shuffling context should be enabled
+          type: boolean
+    smartShuffle:
+      x-go-name: ApiSmartShuffle
+      description: A toggle smart shuffle payload
+      type: object
+      required: [ smart_shuffle ]
+      properties:
+        smart_shuffle:
+          description: Whether smart shuffle should be enabled
           type: boolean
     addToQueue:
       x-go-name: ApiAddToQueue
@@ -959,6 +983,22 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/shuffleContext'
+      responses:
+        200:
+          description: Successful response
+  /player/smart_shuffle:
+    post:
+      operationId: playerSmartShuffle
+      description: >-
+        Toggle smart shuffle: sets the context_enhancement mode to
+        RECOMMENDATION or NONE and reports it to Spotify, as a Spotify app
+        toggling it would. No recommended tracks are added to the queue.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/smartShuffle'
       responses:
         200:
           description: Successful response

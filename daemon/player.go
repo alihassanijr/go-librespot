@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"strings"
 	"sync"
@@ -688,6 +689,8 @@ func (p *AppPlayer) handleApiRequest(req ApiRequest) (any, error) {
 			RepeatContext:      p.state.player.Options.RepeatingContext,
 			RepeatTrack:        p.state.player.Options.RepeatingTrack,
 			ShuffleContext:     p.state.player.Options.ShufflingContext,
+			SmartShuffle:       smartShuffleOn(p.state.player.Options.GetModes()),
+			Modes:              maps.Clone(p.state.player.Options.GetModes()),
 			Stopped:            !p.state.player.IsPlaying,
 			Paused:             p.state.player.IsPaused,
 			Buffering:          p.state.player.IsBuffering,
@@ -695,6 +698,10 @@ func (p *AppPlayer) handleApiRequest(req ApiRequest) (any, error) {
 			PlayOriginDeviceId: nonEmpty(p.state.player.PlayOrigin.DeviceIdentifier),
 			ContextUri:         nonEmpty(p.state.player.ContextUri),
 			ContextName:        nonEmpty(p.state.player.ContextMetadata["context_description"]),
+		}
+
+		if resp.Modes == nil {
+			resp.Modes = map[string]string{}
 		}
 
 		if p.primaryStream != nil && p.prodInfo != nil {
@@ -866,6 +873,9 @@ func (p *AppPlayer) handleApiRequest(req ApiRequest) (any, error) {
 	case ApiRequestTypeSetShufflingContext:
 		val := req.Data.(bool)
 		p.setOptions(nil, nil, &val)
+		return nil, nil
+	case ApiRequestTypeSetSmartShuffle:
+		p.setSmartShuffle(req.Data.(bool))
 		return nil, nil
 	case ApiRequestTypeAddToQueue:
 		p.addToQueue(&connectpb.ContextTrack{Uri: req.Data.(string)})

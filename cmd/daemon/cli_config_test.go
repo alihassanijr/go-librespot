@@ -66,6 +66,12 @@ func TestSkipDebounceMapping(t *testing.T) {
 	require.Zero(t, c.toDaemonConfig().SkipDebounce)
 }
 
+func TestUnplayableSkipLimitMapping(t *testing.T) {
+	var c cliConfig
+	c.UnplayableSkipLimit = 3
+	require.Equal(t, 3, c.toDaemonConfig().UnplayableSkipLimit)
+}
+
 func TestParseSize(t *testing.T) {
 	cases := []struct {
 		in      string

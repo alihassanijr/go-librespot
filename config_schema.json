@@ -327,6 +327,12 @@
           "default": 600,
           "minimum": 0
         },
+        "unplayable_skip_limit": {
+          "type": "integer",
+          "description": "How many unplayable tracks in a row (audio key refused, restricted, no supported format) are skipped past before playback stops",
+          "default": 3,
+          "minimum": 1
+        },
         "external_volume": {
           "type": "boolean",
           "description": "Whether volume is controlled externally, if true the app will not pre-multiply samples",

@@ -218,6 +218,12 @@ type ApiShuffleContext struct {
 	ShuffleContext bool `json:"shuffle_context"`
 }
 
+// ApiSmartShuffle A toggle smart shuffle payload
+type ApiSmartShuffle struct {
+	// SmartShuffle Whether smart shuffle should be enabled
+	SmartShuffle bool `json:"smart_shuffle"`
+}
+
 // ApiStatus The player status
 type ApiStatus struct {
 	// Buffering Whether the player is buffering
@@ -237,6 +243,9 @@ type ApiStatus struct {
 
 	// DeviceType The player device type, for example COMPUTER or SPEAKER
 	DeviceType string `json:"device_type"`
+
+	// Modes The player option modes as Spotify clients set them, for example jam and context_enhancement; empty when none was ever set
+	Modes map[string]string `json:"modes"`
 
 	// NextTrack The upcoming track when its metadata is cached (metadata.enabled), so clients can pre-warm its name and cover art before the user skips to it. Absent when unknown.
 	NextTrack *ApiTrack `json:"next_track,omitempty"`
@@ -258,6 +267,9 @@ type ApiStatus struct {
 
 	// ShuffleContext Whether the shuffle context feature is enabled
 	ShuffleContext bool `json:"shuffle_context"`
+
+	// SmartShuffle Whether smart shuffle is on: the context_enhancement mode is RECOMMENDATION. Only the mode is kept and reported; no recommended tracks are added to the queue.
+	SmartShuffle bool `json:"smart_shuffle"`
 
 	// Stopped Whether the player is stopped
 	Stopped bool      `json:"stopped"`
@@ -396,6 +408,9 @@ type PlayerSeekJSONRequestBody = ApiSeek
 // PlayerShuffleContextJSONRequestBody defines body for PlayerShuffleContext for application/json ContentType.
 type PlayerShuffleContextJSONRequestBody = ApiShuffleContext
 
+// PlayerSmartShuffleJSONRequestBody defines body for PlayerSmartShuffle for application/json ContentType.
+type PlayerSmartShuffleJSONRequestBody = ApiSmartShuffle
+
 // PlayerSetVolumeJSONRequestBody defines body for PlayerSetVolume for application/json ContentType.
 type PlayerSetVolumeJSONRequestBody = ApiSetVolume
 
@@ -464,6 +479,9 @@ type ServerInterface interface {
 
 	// (POST /player/shuffle_context)
 	PlayerShuffleContext(w http.ResponseWriter, r *http.Request)
+
+	// (POST /player/smart_shuffle)
+	PlayerSmartShuffle(w http.ResponseWriter, r *http.Request)
 
 	// (POST /player/stop)
 	PlayerStop(w http.ResponseWriter, r *http.Request)
@@ -834,6 +852,20 @@ func (siw *ServerInterfaceWrapper) PlayerShuffleContext(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// PlayerSmartShuffle operation middleware
+func (siw *ServerInterfaceWrapper) PlayerSmartShuffle(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlayerSmartShuffle(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PlayerStop operation middleware
 func (siw *ServerInterfaceWrapper) PlayerStop(w http.ResponseWriter, r *http.Request) {
 
@@ -1058,6 +1090,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/player/resume", wrapper.PlayerResume)
 	m.HandleFunc("POST "+options.BaseURL+"/player/seek", wrapper.PlayerSeek)
 	m.HandleFunc("POST "+options.BaseURL+"/player/shuffle_context", wrapper.PlayerShuffleContext)
+	m.HandleFunc("POST "+options.BaseURL+"/player/smart_shuffle", wrapper.PlayerSmartShuffle)
 	m.HandleFunc("POST "+options.BaseURL+"/player/stop", wrapper.PlayerStop)
 	m.HandleFunc("GET "+options.BaseURL+"/player/volume", wrapper.PlayerGetVolume)
 	m.HandleFunc("POST "+options.BaseURL+"/player/volume", wrapper.PlayerSetVolume)

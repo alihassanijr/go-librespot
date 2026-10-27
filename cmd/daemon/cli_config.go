@@ -57,6 +57,7 @@ type cliConfig struct {
 	NormalisationPregain          float32  `koanf:"normalisation_pregain"`
 	CrossfadeDuration             int      `koanf:"crossfade_duration"`
 	SkipDebounceMs                int      `koanf:"skip_debounce_ms"`
+	UnplayableSkipLimit           int      `koanf:"unplayable_skip_limit"`
 	ExternalVolume                bool     `koanf:"external_volume"`
 	ZeroconfEnabled               bool     `koanf:"zeroconf_enabled"`
 	ZeroconfPort                  int      `koanf:"zeroconf_port"`
@@ -134,6 +135,7 @@ func (c *cliConfig) toDaemonConfig() *daemon.Config {
 		NormalisationPregain:      c.NormalisationPregain,
 		CrossfadeDuration:         c.CrossfadeDuration,
 		SkipDebounce:              time.Duration(c.SkipDebounceMs) * time.Millisecond,
+		UnplayableSkipLimit:       c.UnplayableSkipLimit,
 		ExternalVolume:            c.ExternalVolume,
 		DisableAutoplay:           c.DisableAutoplay,
 
@@ -226,6 +228,8 @@ func loadCLIConfig(cfg *cliConfig) error {
 
 		"skip_debounce_ms": 600,
 
+		"unplayable_skip_limit": 3,
+
 		"cdn_race":             2,
 		"cdn_quarantine_hours": 24,
 
@@ -302,6 +306,9 @@ func loadCLIConfig(cfg *cliConfig) error {
 	}
 	if cfg.CdnQuarantineHours < 0 {
 		return fmt.Errorf("invalid cdn_quarantine_hours: %d (0 disables)", cfg.CdnQuarantineHours)
+	}
+	if cfg.UnplayableSkipLimit < 1 {
+		return fmt.Errorf("invalid unplayable_skip_limit: %d (at least 1)", cfg.UnplayableSkipLimit)
 	}
 
 	return nil
